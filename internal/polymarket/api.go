@@ -27,6 +27,16 @@ func NewClient() *Client {
 	}
 }
 
+func (c *Client) doGET(url string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "poly-bot/1.0")
+	return c.httpClient.Do(req)
+}
+
 // GammaMarket represents a market from the Gamma API
 type GammaMarket struct {
 	ID            string `json:"id"`
@@ -61,7 +71,7 @@ func (c *Client) GetMarkets(limit int) ([]ParsedMarket, error) {
 	// Query: active=true, closed=false, order by volume (most liquid markets)
 	url := fmt.Sprintf("%s/markets?limit=%d&active=true&closed=false", GammaAPIURL, limit)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +143,7 @@ type Order struct {
 func (c *Client) GetOrderbook(tokenID string) (*Orderbook, error) {
 	url := fmt.Sprintf("%s/book?token_id=%s", ClobAPIURL, tokenID)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +167,7 @@ func (c *Client) GetOrderbook(tokenID string) (*Orderbook, error) {
 func (c *Client) GetCLOBPrice(tokenID string, side string) (float64, error) {
 	url := fmt.Sprintf("%s/price?token_id=%s&side=%s", ClobAPIURL, tokenID, side)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return 0, err
 	}
@@ -186,7 +196,7 @@ func (c *Client) GetCLOBPrice(tokenID string, side string) (float64, error) {
 func (c *Client) GetEventBySlug(slug string) (*GammaEvent, error) {
 	url := fmt.Sprintf("%s/events?slug=%s", GammaAPIURL, slug)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +325,7 @@ type MarketSpread struct {
 func (c *Client) GetMarketSpread(slug string) (*MarketSpread, error) {
 	url := fmt.Sprintf("%s/markets?slug=%s", GammaAPIURL, slug)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return nil, err
 	}
@@ -372,12 +382,31 @@ type Trade struct {
 
 // Position represents a position from the Data API
 type Position struct {
-	Asset       string  `json:"asset"`
-	Size        float64 `json:"size"`
-	AvgPrice    float64 `json:"avgPrice"`
-	Market      string  `json:"market"`
-	ConditionId string  `json:"conditionId"`
-	Outcome     string  `json:"outcome"`
+	Asset              string  `json:"asset"`
+	Size               float64 `json:"size"`
+	AvgPrice           float64 `json:"avgPrice"`
+	InitialValue       float64 `json:"initialValue"`
+	CurrentValue       float64 `json:"currentValue"`
+	CashPnL            float64 `json:"cashPnl"`
+	PercentPnL         float64 `json:"percentPnl"`
+	TotalBought        float64 `json:"totalBought"`
+	RealizedPnL        float64 `json:"realizedPnl"`
+	PercentRealizedPnL float64 `json:"percentRealizedPnl"`
+	CurPrice           float64 `json:"curPrice"`
+	Market             string  `json:"market"`
+	ConditionId        string  `json:"conditionId"`
+	Title              string  `json:"title"`
+	Slug               string  `json:"slug"`
+	EventSlug          string  `json:"eventSlug"`
+	Icon               string  `json:"icon"`
+	Outcome            string  `json:"outcome"`
+	OutcomeIndex       int     `json:"outcomeIndex"`
+	OppositeOutcome    string  `json:"oppositeOutcome"`
+	OppositeAsset      string  `json:"oppositeAsset"`
+	EndDate            string  `json:"endDate"`
+	Redeemable         bool    `json:"redeemable"`
+	Mergeable          bool    `json:"mergeable"`
+	NegativeRisk       bool    `json:"negativeRisk"`
 }
 
 // GetTrades fetches trades for a user from the Data API
@@ -388,7 +417,7 @@ func (c *Client) GetTrades(userAddress string, limit int) ([]Trade, error) {
 	}
 	url := fmt.Sprintf("%s/trades?user=%s&limit=%d", DataAPIURL, userAddress, limit)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +440,7 @@ func (c *Client) GetTrades(userAddress string, limit int) ([]Trade, error) {
 func (c *Client) GetPositions(userAddress string) ([]Position, error) {
 	url := fmt.Sprintf("%s/positions?user=%s", DataAPIURL, userAddress)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +462,7 @@ func (c *Client) GetPositions(userAddress string) ([]Position, error) {
 func (c *Client) GetPrice(tokenID string) (float64, error) {
 	url := fmt.Sprintf("%s/price?token_id=%s", ClobAPIURL, tokenID)
 
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.doGET(url)
 	if err != nil {
 		return 0, err
 	}

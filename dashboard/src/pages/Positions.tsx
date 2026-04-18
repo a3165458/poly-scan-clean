@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { PositionInfo, AccountInfo } from '../types';
 
+function isPositiveOutcome(side: string) {
+  return ['YES', 'BUY', 'UP'].includes(side.toUpperCase());
+}
+
 function MIcon({ name, filled, className }: { name: string; filled?: boolean; className?: string }) {
   return (
     <span
@@ -108,7 +112,7 @@ export default function Positions() {
                     <td className="py-4 px-2 font-bold text-slate-900">{p.market_name || p.market_id}</td>
                     <td className="py-4 px-2">
                       <span className={`px-2 py-1 text-[10px] font-bold rounded-lg ${
-                        p.side === 'YES' || p.side === 'buy'
+                        isPositiveOutcome(p.side)
                           ? 'bg-secondary/10 text-secondary'
                           : 'bg-error/10 text-error'
                       }`}>

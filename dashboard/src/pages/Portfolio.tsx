@@ -17,6 +17,10 @@ function MIcon({ name, filled, className }: { name: string; filled?: boolean; cl
   );
 }
 
+function isPositiveOutcome(side: string) {
+  return ['YES', 'BUY', 'UP'].includes(side.toUpperCase());
+}
+
 export default function Portfolio() {
   const [dash, setDash] = useState<DashboardData | null>(null);
   const [perf, setPerf] = useState<PerformanceStats | null>(null);
@@ -91,9 +95,9 @@ export default function Portfolio() {
   const totalPnl = perf?.total_pnl ?? strategy?.total_pnl ?? 0;
   const winRate = perf?.win_rate ?? strategy?.win_rate ?? 0;
   const maxDrawdown = perf?.max_drawdown ?? strategy?.drawdown ?? 0;
-  const exposure = account?.positions_value && account?.portfolio_value
+  const exposure = account && account.portfolio_value > 0
     ? ((account.positions_value / account.portfolio_value) * 100)
-    : (activePositions.length > 0 ? 35 : 0);
+    : null;
   const totalTrades = perf?.total_trades ?? strategy?.total_trades ?? 0;
   const sharpeRatio = perf?.sharpe_ratio ?? 0;
   const portfolioHealth = Math.max(0, Math.min(100, 100 - maxDrawdown * 2));
@@ -136,8 +140,8 @@ export default function Portfolio() {
         <KpiCard
           icon="pie_chart" iconBg="bg-blue-100" iconColor="text-blue-600"
           label="Current Exposure %"
-          value={`${exposure.toFixed(0)}%`}
-          trend="Utilized capital"
+          value={exposure === null ? '--' : `${exposure.toFixed(0)}%`}
+          trend={exposure === null ? 'Awaiting wallet data' : 'Utilized capital'}
           trendColor="text-slate-500"
         />
         <KpiCard
@@ -384,7 +388,7 @@ function PositionsTable({ positions }: { positions: PositionInfo[] }) {
             <td className="py-4 px-2 font-bold text-slate-900">{p.market_name || p.market_id}</td>
             <td className="py-4 px-2">
               <span className={`px-2 py-1 text-[10px] font-bold rounded-lg ${
-                p.side === 'YES' || p.side === 'buy'
+                isPositiveOutcome(p.side)
                   ? 'bg-secondary/10 text-secondary'
                   : 'bg-error/10 text-error'
               }`}>
@@ -395,7 +399,7 @@ function PositionsTable({ positions }: { positions: PositionInfo[] }) {
             <td className="py-4 px-2 text-slate-500">${p.entry_price.toFixed(2)}</td>
             <td className="py-4 px-2 text-slate-500">${p.current_price.toFixed(2)}</td>
             <td className={`py-4 px-2 text-right font-black ${p.pnl_pct >= 0 ? 'text-secondary' : 'text-error'}`}>
-              {p.pnl_pct >= 0 ? '+' : ''}{(p.pnl_pct * 100).toFixed(1)}%
+              {p.pnl_pct >= 0 ? '+' : ''}{p.pnl_pct.toFixed(1)}%
             </td>
           </tr>
         ))}

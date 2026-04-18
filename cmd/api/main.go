@@ -68,6 +68,7 @@ type PositionInfo struct {
 	EntryPrice   float64   `json:"entry_price"`
 	CurrentPrice float64   `json:"current_price"`
 	Size         float64   `json:"size"`
+	CurrentValue float64   `json:"current_value"`
 	PnL          float64   `json:"pnl"`
 	PnLPct       float64   `json:"pnl_pct"`
 	OpenTime     time.Time `json:"open_time"`
@@ -834,6 +835,75 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonZeroFloat(values ...float64) float64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func buildPositionInfo(pos polymarket.Position, fallbackCurrentPrice float64) PositionInfo {
+	currentPrice := firstNonZeroFloat(pos.CurPrice, fallbackCurrentPrice)
+	if currentPrice == 0 && pos.Size > 0 && pos.CurrentValue > 0 {
+		currentPrice = pos.CurrentValue / pos.Size
+	}
+	if currentPrice == 0 {
+		currentPrice = pos.AvgPrice
+	}
+
+	currentValue := pos.CurrentValue
+	if currentValue == 0 && pos.Size > 0 && currentPrice > 0 {
+		currentValue = pos.Size * currentPrice
+	}
+
+	pnl := pos.CashPnL
+	if pnl == 0 && currentValue > 0 && pos.InitialValue > 0 {
+		pnl = currentValue - pos.InitialValue
+	}
+	if pnl == 0 && pos.Size > 0 && currentPrice > 0 && pos.AvgPrice > 0 {
+		pnl = pos.Size * (currentPrice - pos.AvgPrice)
+	}
+
+	pnlPct := pos.PercentPnL
+	if pnlPct == 0 && pos.InitialValue > 0 {
+		pnlPct = (pnl / pos.InitialValue) * 100
+	}
+	if pnlPct == 0 && pos.AvgPrice > 0 && currentPrice > 0 {
+		pnlPct = ((currentPrice - pos.AvgPrice) / pos.AvgPrice) * 100
+	}
+
+	marketID := firstNonEmptyString(pos.Slug, pos.ConditionId, pos.Market, pos.Asset)
+	marketName := firstNonEmptyString(pos.Title, pos.Market, pos.Slug, pos.ConditionId, pos.Asset)
+
+	return PositionInfo{
+		MarketID:     marketID,
+		MarketName:   marketName,
+		TokenID:      pos.Asset,
+		Side:         pos.Outcome,
+		EntryPrice:   pos.AvgPrice,
+		CurrentPrice: currentPrice,
+		Size:         pos.Size,
+		CurrentValue: currentValue,
+		PnL:          pnl,
+		PnLPct:       pnlPct,
+		OpenTime:     time.Now(),
+		Duration:     "Active",
+		IsActive:     true,
+		CloseReason:  "",
+	}
+}
+
 func (s *APIServer) refreshPositions() {
 	positions := make([]PositionInfo, 0)
 
@@ -855,36 +925,13 @@ func (s *APIServer) refreshPositions() {
 	}
 
 	for _, pos := range apiPositions {
-		// Get current price from order book
-		currentPrice := pos.AvgPrice
-		if price, err := s.client.GetPrice(pos.Asset); err == nil && price > 0 {
-			currentPrice = price
+		fallbackCurrentPrice := 0.0
+		if pos.CurPrice <= 0 && (pos.CurrentValue <= 0 || pos.Size <= 0) {
+			if price, err := s.client.GetPrice(pos.Asset); err == nil && price > 0 {
+				fallbackCurrentPrice = price
+			}
 		}
-
-		// Calculate unrealized PnL
-		pnl := 0.0
-		pnlPct := 0.0
-		if pos.Size > 0 && pos.AvgPrice > 0 {
-			// PnL = size * (currentPrice - entryPrice)
-			pnl = pos.Size * (currentPrice - pos.AvgPrice)
-			pnlPct = ((currentPrice - pos.AvgPrice) / pos.AvgPrice) * 100
-		}
-
-		positions = append(positions, PositionInfo{
-			MarketID:     pos.Market,
-			MarketName:   pos.Market,
-			TokenID:      pos.Asset,
-			Side:         pos.Outcome,
-			EntryPrice:   pos.AvgPrice,
-			CurrentPrice: currentPrice,
-			Size:         pos.Size,
-			PnL:          pnl,
-			PnLPct:       pnlPct,
-			OpenTime:     time.Now(),
-			Duration:     "Active",
-			IsActive:     true,
-			CloseReason:  "",
-		})
+		positions = append(positions, buildPositionInfo(pos, fallbackCurrentPrice))
 	}
 
 	s.mu.Lock()
@@ -1341,12 +1388,12 @@ func (s *APIServer) handleCostsDaily(w http.ResponseWriter, r *http.Request) {
 
 // AccountInfo returned by /api/account
 type AccountInfo struct {
-	WalletAddress  string           `json:"wallet_address"`
-	USDCBalance    float64          `json:"usdc_balance"`
-	PositionsValue float64          `json:"positions_value"`
-	PortfolioValue float64          `json:"portfolio_value"`
-	DailyStats     []DailyStat      `json:"daily_stats"`
-	EquityCurve    []EquityPoint    `json:"equity_curve"`
+	WalletAddress  string        `json:"wallet_address"`
+	USDCBalance    float64       `json:"usdc_balance"`
+	PositionsValue float64       `json:"positions_value"`
+	PortfolioValue float64       `json:"portfolio_value"`
+	DailyStats     []DailyStat   `json:"daily_stats"`
+	EquityCurve    []EquityPoint `json:"equity_curve"`
 }
 
 type DailyStat struct {
@@ -1361,6 +1408,82 @@ type DailyStat struct {
 type EquityPoint struct {
 	Date  string  `json:"date"`
 	Value float64 `json:"value"`
+}
+
+type accountDailyStatSnapshot struct {
+	Date    string  `json:"date"`
+	Trades  int     `json:"trades"`
+	Wins    int     `json:"wins"`
+	Losses  int     `json:"losses"`
+	PnL     float64 `json:"pnl"`
+	WinRate float64 `json:"win_rate"`
+}
+
+type accountPerformanceSnapshot struct {
+	TotalPnL   float64                             `json:"total_pnl"`
+	DailyStats map[string]accountDailyStatSnapshot `json:"daily_stats"`
+}
+
+func positionMarketValue(pos PositionInfo) float64 {
+	if pos.CurrentValue > 0 {
+		return pos.CurrentValue
+	}
+	if pos.Size > 0 && pos.CurrentPrice > 0 {
+		return pos.Size * pos.CurrentPrice
+	}
+	return 0
+}
+
+func buildAccountInfo(address string, usdcBalance float64, positions []PositionInfo, perf accountPerformanceSnapshot) AccountInfo {
+	positionsValue := 0.0
+	for _, pos := range positions {
+		if pos.IsActive {
+			positionsValue += positionMarketValue(pos)
+		}
+	}
+
+	dailyStats := make([]DailyStat, 0, len(perf.DailyStats))
+	equityCurve := make([]EquityPoint, 0, len(perf.DailyStats))
+	dates := make([]string, 0, len(perf.DailyStats))
+	for date := range perf.DailyStats {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+
+	portfolioValue := usdcBalance + positionsValue
+	startingCapital := portfolioValue - perf.TotalPnL
+	if startingCapital < 0 {
+		startingCapital = 0
+	}
+
+	cumulativePnL := 0.0
+	for _, date := range dates {
+		stat := perf.DailyStats[date]
+		statDate := firstNonEmptyString(stat.Date, date)
+		dailyStats = append(dailyStats, DailyStat{
+			Date:    statDate,
+			Trades:  stat.Trades,
+			Wins:    stat.Wins,
+			Losses:  stat.Losses,
+			PnL:     stat.PnL,
+			WinRate: stat.WinRate,
+		})
+
+		cumulativePnL += stat.PnL
+		equityCurve = append(equityCurve, EquityPoint{
+			Date:  statDate,
+			Value: startingCapital + cumulativePnL,
+		})
+	}
+
+	return AccountInfo{
+		WalletAddress:  address,
+		USDCBalance:    usdcBalance,
+		PositionsValue: positionsValue,
+		PortfolioValue: portfolioValue,
+		DailyStats:     dailyStats,
+		EquityCurve:    equityCurve,
+	}
 }
 
 // queryUSDCBalance queries USDC.e balance from Polygon RPC
@@ -1435,86 +1558,26 @@ func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Calculate positions value from live data
 	s.mu.RLock()
-	positionsValue := 0.0
-	for _, pos := range s.positions {
-		if pos.IsActive && pos.Size > 0 {
-			positionsValue += pos.Size * pos.CurrentPrice
-		}
-	}
+	positions := append([]PositionInfo(nil), s.positions...)
 	s.mu.RUnlock()
 
-	// Load balance and daily stats from performance.json
 	var usdcBalance float64
-	var dailyStats []DailyStat
-	var equityCurve []EquityPoint
+	if onChainBalance, err := queryUSDCBalance(address); err == nil {
+		usdcBalance = onChainBalance
+	} else {
+		log.Printf("[API] Failed to query on-chain USDC balance for %s: %v", address, err)
+	}
 
+	var perf accountPerformanceSnapshot
 	perfFile := "data/performance.json"
 	if raw, err := os.ReadFile(perfFile); err == nil {
-		var rawPerf struct {
-			CurrentBalance float64 `json:"current_balance"`
-			TotalPnL       float64 `json:"total_pnl"`
-			PeakBalance    float64 `json:"peak_balance"`
-			DailyStats     map[string]struct {
-				Date    string  `json:"date"`
-				Trades  int     `json:"trades"`
-				Wins    int     `json:"wins"`
-				Losses  int     `json:"losses"`
-				PnL     float64 `json:"pnl"`
-				WinRate float64 `json:"win_rate"`
-			} `json:"daily_stats"`
-		}
-		if err := json.Unmarshal(raw, &rawPerf); err == nil {
-			usdcBalance = rawPerf.CurrentBalance
-
-			dates := make([]string, 0, len(rawPerf.DailyStats))
-			for d := range rawPerf.DailyStats {
-				dates = append(dates, d)
-			}
-			sort.Strings(dates)
-
-			// Calculate starting capital from current_balance - total_pnl
-			startingCapital := rawPerf.CurrentBalance - rawPerf.TotalPnL
-			if startingCapital <= 0 {
-				startingCapital = 10.0
-			}
-			cumPnL := 0.0
-			for _, d := range dates {
-				stat := rawPerf.DailyStats[d]
-				dailyStats = append(dailyStats, DailyStat{
-					Date:    stat.Date,
-					Trades:  stat.Trades,
-					Wins:    stat.Wins,
-					Losses:  stat.Losses,
-					PnL:     stat.PnL,
-					WinRate: stat.WinRate,
-				})
-				cumPnL += stat.PnL
-				equityCurve = append(equityCurve, EquityPoint{
-					Date:  stat.Date,
-					Value: startingCapital + cumPnL,
-				})
-			}
+		if err := json.Unmarshal(raw, &perf); err != nil {
+			log.Printf("[API] Failed to parse performance snapshot: %v", err)
 		}
 	}
 
-	// Try on-chain balance as supplement
-	onChainBalance, err := queryUSDCBalance(address)
-	if err == nil && onChainBalance > 0 {
-		usdcBalance = onChainBalance
-	}
-
-	acct := AccountInfo{
-		WalletAddress:  address,
-		USDCBalance:    usdcBalance,
-		PositionsValue: positionsValue,
-		PortfolioValue: usdcBalance + positionsValue,
-		DailyStats:     dailyStats,
-		EquityCurve:    equityCurve,
-	}
-
-	json.NewEncoder(w).Encode(acct)
+	json.NewEncoder(w).Encode(buildAccountInfo(address, usdcBalance, positions, perf))
 }
 
 func main() {

@@ -39,6 +39,7 @@ export interface PositionInfo {
   entry_price: number;
   current_price: number;
   size: number;
+  current_value: number;
   pnl: number;
   pnl_pct: number;
   open_time: string;
